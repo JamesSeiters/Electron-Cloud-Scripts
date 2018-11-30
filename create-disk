@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Author: James Seiters
+# Created: 2018/11/30
+# Updated:
+# Copyritght: Atomic.Computer 2018
+# Descritption: A shell script to automate the creation of ZFS backed VM disk.
+#               Created from instructions on https://ramsdenj.com/2016/07/21/
+#               making-a-zvol-backed-virtualbox-vm-on-linux.html
+# Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME]
+
+hostname=$1
+size=$2
+username=$3
+
+zfs create -V $sizeG development/vm/$hostname
+
+# Using chown works for the short term, but will not survive a reboot. The udev
+# rule is used to make ownership permanent.
+chown $username:disk /dev/zvol/development/vm/$hostname
+echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\" \
+PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"tank/zvol-archlinux\" \
+OWNER=\"john\" GROUP=\"disk\" MODE=\"0750\"" >> \
+/etc/udev/rules.d/99-local-zvol.rules
+udevadm control --reload
+
+# Create the VMDK device file for Virtualbox.
+VBoxManage internalcommands createrawvmdk -filename $hostname.vmdk \
+-rawdisk /dev/zvol/development/$hostname
