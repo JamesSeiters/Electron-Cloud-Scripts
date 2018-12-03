@@ -2,28 +2,39 @@
 
 # Author: James Seiters
 # Created: 2018/11/30
-# Updated:
+# Updated: 2018/12/3
 # Copyritght: Atomic.Computer 2018
 # Descritption: A shell script to automate the creation of ZFS backed VM disk.
 #               Created from instructions on https://ramsdenj.com/2016/07/21/
 #               making-a-zvol-backed-virtualbox-vm-on-linux.html
-# Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME]
+# Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]
 
-hostname=$1
+if [ $# -ne 5 ]; then
+  echo "Usage: $(basename $0) [VM HOST NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]"
+  exit 1
+fi
+
+vmhostname=$1
 size=$2
 username=$3
+tank=${4%/}
+vmdirectory=${5%/}
 
-zfs create -V $sizeG development/vm/$hostname
+if zfs create -V "$size"G development/vm/$vmhostname; then
+  # Using chown works for the short term, but will not survive a reboot.
+  # The udev rule is used to make ownership permanent.
+  chown $username:disk /dev/zvol/development/vm/$vmhostname
+  echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\""\
+  "PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$tank/$vmhostname\""\
+  "OWNER=\"$username\" GROUP=\"disk\" MODE=\"0750\"" >> \
+  /etc/udev/rules.d/99-local-zvol.rules
+  udevadm control --reload
 
-# Using chown works for the short term, but will not survive a reboot. The udev
-# rule is used to make ownership permanent.
-chown $username:disk /dev/zvol/development/vm/$hostname
-echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\" \
-PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"tank/zvol-archlinux\" \
-OWNER=\"john\" GROUP=\"disk\" MODE=\"0750\"" >> \
-/etc/udev/rules.d/99-local-zvol.rules
-udevadm control --reload
-
-# Create the VMDK device file for Virtualbox.
-VBoxManage internalcommands createrawvmdk -filename $hostname.vmdk \
--rawdisk /dev/zvol/development/$hostname
+  # Create the VMDK device file for Virtualbox.
+  VBoxManage internalcommands createrawvmdk -filename \
+  "$vmdirectory/$vmhostname.vmdk" -rawdisk "/dev/zvol/$tank/$vmhostname"
+  chown jseiters:jseiters "$vmdirectory/$vmhostname.vmdk"
+else
+  exit 2
+fi
+                                                                                                                                                               
