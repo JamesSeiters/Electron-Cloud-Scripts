@@ -13,7 +13,8 @@
 # For the vmdk file chown command it should be $username:$groupname.
 
 if [ $# -ne 5 ]; then
-  echo "Usage: $(basename $0) [VM HOST NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]"
+  echo "Usage: $(basename $0) [VM HOST NAME] [SIZE] [USER NAME] [TANK]"\
+  "[VMDIRECTORY]"
   exit 1
 fi
 
