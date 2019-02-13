@@ -9,9 +9,6 @@
 #               making-a-zvol-backed-virtualbox-vm-on-linux.html
 # Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]
 
-# TODO:
-# For the vmdk file chown command it should be $username:$groupname.
-
 if [ $# -ne 5 ]; then
   echo "Usage: $(basename $0) [VM HOST NAME] [SIZE] [USER NAME] [TANK]"\
   "[VMDIRECTORY]"
@@ -25,19 +22,19 @@ tank=${4%/}
 vmdirectory=${5%/}
 
 if zfs create -V "$size"G development/vm/$vmhostname; then
-  # Using chown works for the short term, but will not survive a reboot.
-  # The udev rule is used to make ownership permanent.
-  chown $username:disk /dev/zvol/development/vm/"$vmhostname"
-  echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\""\
-  "PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$tank/$vmhostname\""\
-  "OWNER=\"$username\" GROUP=\"disk\" MODE=\"0750\"" >> \
-  /etc/udev/rules.d/99-local-zvol.rules
-  udevadm control --reload
+    # Using chown works for the short term, but will not survive a reboot.
+    # The udev rule is used to make ownership permanent.
+    chown $username:disk /dev/zvol/development/vm/"$vmhostname"
+    echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\""\
+    "PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$tank/$vmhostname\""\
+    "OWNER=\"$username\" GROUP=\"disk\" MODE=\"0750\"" >> \
+    /etc/udev/rules.d/99-local-zvol.rules
+    udevadm control --reload
 
   # Create the VMDK device file for Virtualbox.
   VBoxManage internalcommands createrawvmdk -filename \
-  "$vmdirectory/$vmhostname.vmdk" -rawdisk "/dev/zvol/$tank/$vmhostname"
-  chown $username:$username "$vmdirectory/$vmhostname.vmdk"
+    "$vmdirectory/$vmhostname.vmdk" -rawdisk "/dev/zvol/$tank/$vmhostname"
+    chown $username:$username "$vmdirectory/$vmhostname.vmdk"
 else
   exit 2
 fi

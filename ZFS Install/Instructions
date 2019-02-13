@@ -1,0 +1,109 @@
+#!/bin/bash -e
+
+err_report() {
+    echo "Error on line $1"
+}
+trap 'err_report $LINENO' ERR
+
+# Handle switches.
+##TODO: Convert this to use the C library getopt.
+##
+while [ -n "$1" ]; do
+    case "$1" in
+    -q) quite=true
+        ;;
+    *) echo "Option $1 not recognized"
+       ;;
+    esac
+    shift
+done
+
+# Define variables.
+##TODO: Should this be parameters? or maybe generated from another script
+## into a file since I need to pass this to chroot script?
+POOLNAME=ITWorkDesk00001-OS
+DISK1=/dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70P1111
+DISK2=/dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70A6813
+NEWHOST=itworkdesk00001
+USERNAME=jseiters
+PASSWORD=firstboot
+LINESPACER=$(printf '*%.0s' {1..20})
+
+# Prepare environment.
+echo -e"\n$LINESPACER"
+echo -e "\nPreparing environment."
+echo -e "\n$LINESPACER"
+echo "Updating package list."
+apt update
+echo -e "\nInstalling packages.\n"
+apt install --yes debootstrap gdisk zfs-initramfs
+
+# Partition disks.
+echo -e "\nPartitioning disks.\n"
+wipefs --all --force $DISK1
+wipefs --all --force $DISK2
+sgdisk -Z $DISK1
+sgdisk -Z $DISK2
+sgdisk -a1 -n1:34:295 -t1:EF02 -c1:"BIOS boot partition" $DISK1
+sgdisk -a1 -n1:34:295 -t1:EF02 -c1:"BIOS boot partition" $DISK2
+sgdisk -a1 -n3:0:0 -t3:BF00 -c3:"Solaris Root" $DISK1
+sgdisk -a1 -n3:0:0 -t3:BF00 -c3:"Solaris Root" $DISK2
+partprobe
+sleep 5
+
+# Create pool and filesystem containers.
+echo -e "\nCreating pool and filesystems.\n"
+echo "Creating pool."
+zpool create -O atime=on -O relatime=on -O canmount=off -O compression=lz4 -O mountpoint=/ -R /mnt -f $POOLNAME mirror $DISK1-part3 $DISK2-part3
+zfs create -o canmount=off -o mountpoint=none $POOLNAME/ROOT
+zfs create -o canmount=noauto -o mountpoint=/ $POOLNAME/ROOT/OS
+zfs mount $POOLNAME/ROOT/OS
+
+# Create filesystems.
+echo "Creating filesystems."
+zfs create -o setuid=off $POOLNAME/home
+zfs create -o mountpoint=/root $POOLNAME/home/root
+zfs create -o canmount=off -o setuid=off -o exec=off $POOLNAME/var
+zfs create -o com.sun:auto-snapshot=false $POOLNAME/var/cache
+zfs create $POOLNAME/var/log
+zfs create $POOLNAME/var/spool
+zfs create -o com.sun:auto-snapshot=false -o exec=on $POOLNAME/var/tmp
+zfs create -o com.sun:auto-snapshot=false -o setuid=off $POOLNAME/tmp
+zfs set acltype=posixacl $POOLNAME
+zfs set xattr=sa $POOLNAME
+chmod 1777 /mnt/tmp
+
+# Install the minimal system.
+echo -e "\nInstalling minimal system.\n"
+chmod 1777 /mnt/var/tmp
+debootstrap bionic /mnt
+zfs set devices=off $POOLNAME
+
+# Configure minimal system externally.
+echo -e "\nConfiguring minimal system.\n"
+sed "s/127.0.1.1.*/127.0.1.1 $NEWHOST/g" < /etc/hosts > /mnt/etc/hosts
+echo $NEWHOST > /mnt/etc/hostname
+echo -e "network:\n  version: 2\n  renderer: NetworkManager" > /mnt/etc/netplan/01-NetowrkManager.yaml
+sed "s/deb cdrom.*//g" < /etc/apt/sources.list > /mnt/etc/apt/sources.list
+
+# Configure chroot and enter.
+echo -e "\nEntering chroot.\n"
+cp /home/$SUDO_USER/Documents/Instructionschroot /mnt/root/
+mount --rbind /dev /mnt/dev
+mount --rbind /proc /mnt/proc
+mount --rbind /sys /mnt/sys
+chroot /mnt /bin/bash ./root/Instructionschroot
+
+# Cleanup
+echo -e "\nCleaning up.\n"
+# This isn't working yet. It may not matter for what I am doing.
+# echo "Unmounting chroot directories."
+# umount /mnt/dev
+# umount /mnt/sys
+# umount /mnt/proc
+# echo "Exporting ZFS filesystem."
+# zpool export $POOLNAME
+echo -e "\nFinished.\n"
+echo -e "\nPress ctrl-c to cancel reboot."
+sleep 5
+reboot

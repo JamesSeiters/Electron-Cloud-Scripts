@@ -1,0 +1,71 @@
+#!/bin/bash
+set -e
+err_report() {
+    echo "Error on line $1"
+}
+
+trap 'err_report $LINENO' ERR
+
+# Reconfigure environment variables.
+POOLNAME=ITWorkDesk00001-OS
+DISK1=/dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70P1111
+DISK2=/dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70A6813
+NEWHOST=itworkdesk00001
+USERNAME=jseiters
+PASSWORD=firstboot
+
+# Configure the environment.
+echo -e "\nConfiguring chroot.\n"
+ln -s /proc/self/mounts /etc/mtab
+
+# Configure packages already installed.
+echo -e "\nConfiguring locale."
+# The only way I could get this to work is by removing the locales package first.
+# Otherwise the dreaded:
+# *** update-locale: Error: invalid locale settings:  LANG=en_US.UTF-8
+# would appear.
+apt purge --yes locales
+echo "locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8" | debconf-set-selections
+echo "locales locales/default_environment_locale select en_US.UTF-8" | debconf-set-selections
+apt install --yes locales
+
+echo -e "\nConfiguring timezone."
+echo "tzdata tzdata/Areas select America" | debconf-set-selections
+echo "tzdata tzdata/Zones/America select New_York" | debconf-set-selections
+echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections
+DEBIAN_FRONTEND=noninteractive dpkg-reconfigure tzdata
+
+# Install new packages.
+echo -e "\nInstalling packages."
+apt update
+apt install --yes --no-install-recommends linux-image-generic
+apt install --yes nano network-manager zfs-initramfs
+#echo "grub-pc grub2/linux_cmdline_default string " | debconf-set-selections
+# Does not appaer to work.
+#echo "grub-pc grub-pc/hidden_timeout boolean true" | debconf-set-selections
+echo "grub-pc grub-pc/install_devices multiselect $DISK1, $DISK2" | debconf-set-selections
+DEBIAN_FRONTEND=noninteractive apt install --yes grub-pc
+
+# Add users and groups.
+echo -e "\nAdding users and groups.\n"
+addgroup --system lpadmin
+addgroup --system sambashare
+useradd $USERNAME -s /bin/bash -m -G sudo
+echo "$USERNAME:$PASSWORD" | chpasswd
+chage -d 0 $USERNAME
+
+# Fix filesystem mount ordering.
+echo -e "\nFixing filesystem mount ordering.\n"
+zfs set mountpoint=legacy $POOLNAME/var/log
+zfs set mountpoint=legacy $POOLNAME/var/tmp
+zfs set mountpoint=legacy $POOLNAME/tmp
+echo -e "$POOLNAME/var/log /var/log zfs relatime,nodev,noexec,nosuid 0 0\n$POOLNAME/var/tmp /var/tmp zfs relatime,nodev,nosuid 0 0\n$POOLNAME/tmp /tmp zfs relatime,nodev,nosuid 0 0\n" >> /etc/fstab
+
+# Install grub
+echo -e "\nUpdating grub configuration.\n"
+update-initramfs -u -k all
+sed -i 's/GRUB_TIMEOUT_STYLE=hidden/#GRUB_TIMEOUT_STYLE=hidden/g; s/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/GRUB_CMDLINE_LINUX_DEFAULT=""/g; s/#GRUB_TERMINAL=console/GRUB_TERMINAL=console/g;' /etc/default/grub
+update-grub
+
+# Prepare for reboot.
+zfs snapshot $POOLNAME/ROOT/OS@install
