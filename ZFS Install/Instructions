@@ -1,13 +1,35 @@
 #!/bin/bash -e
 
+# Author: James Seiters
+# Created: 2018/11/30
+# Updated: 2018/12/3
+# Copyright: GPLv3
+# Description: A shell script to automate the creation of ZFS backed VM disk.
+#               Created from instructions on https://ramsdenj.com/2016/07/21/
+#               making-a-zvol-backed-virtualbox-vm-on-linux.html
+# Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]
+
 err_report() {
     echo "Error on line $1"
 }
 trap 'err_report $LINENO' ERR
 
-# Handle switches.
-##TODO: Convert this to use the C library getopt.
-##
+usage() {
+    echo "Usage: $0 -p [POOLNAME] -d [DISKPATH] -h [NEWHOSTNAME] -u [USERNAME] -w [PASSWORD]"
+    echo -e "\n-p\tName of the pool to create."
+    echo -e "\n-d\tPath to the installation disk."
+    echo -e "\n-h\tHost name for the new installation."
+    echo -e "\n-u\tUser name of the first user."
+    echo -e "\n-w\tPassword for the frist user."
+    echo -e "\nSee https://github.com/JamesSeiters/Scripts/tree/master/ZFS%20Install/README.md for more information."
+    }
+
+# Handle options.
+######
+# TODO:
+# Convert this to use BASH getopts.
+######
+
 while [ -n "$1" ]; do
     case "$1" in
     -q) quite=true

@@ -1,5 +1,14 @@
-#!/bin/bash
-set -e
+#!/bin/bash -e
+
+# Author: James Seiters
+# Created: 2018/11/30
+# Updated: 2018/12/3
+# Copyright: GPLv3
+# Description: A shell script to automate the creation of ZFS backed VM disk.
+#               Created from instructions on https://ramsdenj.com/2016/07/21/
+#               making-a-zvol-backed-virtualbox-vm-on-linux.html
+# Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]
+
 err_report() {
     echo "Error on line $1"
 }
