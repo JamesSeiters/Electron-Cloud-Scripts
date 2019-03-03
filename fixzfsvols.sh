@@ -9,13 +9,13 @@
 #						  making-a-zvol-backed-virtualbox-vm-on-linux.html
 
 usage () {
-	echo "Usage: $(basename $0)  [USERNAME] [TANK]"
+	echo "Usage: $(basename $0)  [USERNAME] [TANK]" 1>&2
 	exit 1
 }
 
 # Standard sanity checks.
 if [ "$(id -u)" != "0" ]; then
-	echo "This script must be run with root privileges."
+	echo "This script must be run with root privileges." 1>&2
 	exit 2
 fi
 
@@ -23,7 +23,6 @@ fi
 
 # Set variables
 username=$1
-tank=$(zfs list -r $2 -o name -H) || usage
 
 # Main logic
 counter=0
