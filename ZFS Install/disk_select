@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# Author: James Seiters
+# Created: 2019/2/28
+# Updated:
+# Copyright: GPLv3
+# Description: List the drives available on the system and allows user to
+#                        select them for use in the pool.
+
+usage () {
+	
+}
+
+# Define internal variables.

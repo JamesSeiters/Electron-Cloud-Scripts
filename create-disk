@@ -9,6 +9,10 @@
 #               making-a-zvol-backed-virtualbox-vm-on-linux.html
 # Usage: create-disk [VOLUME NAME] [SIZE] [USER NAME] [TANK] [VMDIRECTORY]
 
+error() {
+	echo "Too many disks!"
+}
+
 if [ $# -ne 5 ]; then
   echo "Usage: $(basename $0) [VM HOST NAME] [SIZE] [USER NAME] [TANK]"\
   "[VMDIRECTORY]"
@@ -18,23 +22,46 @@ fi
 vmhostname=$1
 size=$2
 username=$3
-tank=${4%/}
+pool=${4%/}
 vmdirectory=${5%/}
+disk_suffix="-disk"
 
-if zfs create -V "$size"G development/vm/$vmhostname; then
+#######
+# TODO: Need to add check for multiple drives. They will need to be named
+# in this pattern: vmname-disk#.
+#
+# Add number of drives option. JMS 2019-4-13
+#######
+
+disk_number=1
+disk_path="/dev/zvol/$pool/$vmname$disk_suffix$disk_number"
+readonly max_drives=255    # From Virtualbox docs NVMe max drives.
+
+while [[ disk_number -le 99 && -e $disk_path ]]
+do
+	((disk_number++))
+	if [[ $disk_number -eq $max_drives ]]; then
+		error
+		exit 1
+	fi
+done
+disk_path="${disk_path%?}$disk_number"
+disk_name="${disk_path##*/}"
+
+if zfs create -V "$size"G development/vm/$disk_name; then
     # Using chown works for the short term, but will not survive a reboot.
     # The udev rule is used to make ownership permanent.
-    chown $username:disk /dev/zvol/development/vm/"$vmhostname"
+    chown $username:disk "$disk_path" #/dev/zvol/development/vm/"$vmhostname"
     echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\""\
-    "PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$tank/$vmhostname\""\
+    "PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$pool/$disk_name\""\
     "OWNER=\"$username\" GROUP=\"disk\" MODE=\"0750\"" >> \
     /etc/udev/rules.d/99-local-zvol.rules
     udevadm control --reload
 
   # Create the VMDK device file for Virtualbox.
   VBoxManage internalcommands createrawvmdk -filename \
-    "$vmdirectory/$vmhostname.vmdk" -rawdisk "/dev/zvol/$tank/$vmhostname"
-    chown $username:$username "$vmdirectory/$vmhostname.vmdk"
+    "$vmdirectory/$disk_name.vmdk" -rawdisk "$disk_path"
+    chown $username:$username "$vmdirectory/$disk_name.vmdk"
 else
   exit 2
 fi

@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -eE
 
 # Author: James Seiters
 # Created: 2018/11/30
@@ -10,40 +10,73 @@
 #######
 # TODO:
 # DONE Need to make the function that finds all of the disk on the system and
-#	stores them in an array.
+#      stores them in an array.
 # Need to create function that parses the redundancy option.
 # Need to hard code the pool vdev count and hot spares.
 # Run tests to make sure the argument passing is working in the chroot script.
+# Implement a dry run with the set -n option and -x.
 #######
-find_disks () {
-    pushd /dev/disk/by-id >& /dev/null
+###########################
+# Define script variables.#
+###########################
+red='\e[38;5;196m'
+yellow='\e[38;5;11m'
+nc='\e[0m'
+
+find_attached_disk () {
+    pushd /sys/block >& /dev/null
     shopt -s nullglob
-    for f in ./*; do
-     [[ ! $f =~ wwn* && ! $f =~ usb* && ! $f =~ .*-part*. ]] && printf $PWD${f#.*}
+    for device in *; do
+        if [[ $(cat /sys/block/$device/removable) = 0 ]]; then
+            link_path=$(readlink -f $device)
+            if [[ ! $link_path =~ .*virtual*. && ! $link_path =~ .*usb*. ]]; then
+                for symlink in $(udevadm info -q symlink $PWD/$device); do
+                    [[ $symlink =~ .*by-id*. && ! $symlink =~ .*wwn*. ]] \
+                    && printf "/dev/%s " $symlink
+                done
+            fi
+        fi
     done
     shopt -u nullglob
     popd >& /dev/null
 }
 
 check_redundancy () {
-for value in $redundancy_levels; do
-    if [[ $1 = $value ]]; then
-        if [[ $(printf ${#drives[@]}) -eq $minimum_drives[$1] ]]; then
-            printf 0
-        else
-            printf 1
+    for value in "${!minimum_disks[@]}"; do
+        if [[ $1 = $value ]]; then
+            if [[ ${#disks[@]} -ge ${minimum_disks[$1]} ]]; then
+                printf 0
+                exit 0
+            fi
         fi
-    fi
-done
+    done
+    printf 1    # There is an error if no value is found.
 }
 
-err_report() {
-    printf "Error on line $1"
+summary() {
+    #######
+    # TODO:
+    # List all of the options with their values and the disks that are going to
+    # be used in the pool.
+    #######
+    printf "%s\n" "Summary:" "Pool Name: $poolname"\
+     "New Host Name: $newhostname"\
+     "First User: $username"\
+     "Password: $password"\
+     "Pool Type: $redundancy"\
+     "Disk(s) in pool: "
+    for disk in ${disks[@]}; do
+        printf "\t\t%s\n" $disk
+    done
 }
-trap 'err_report $LINENO' ERR
+
+#err_report () {
+#    printf "${red}Error on line ${1}${nc}\n"
+#}
+#trap 'err_report $LINENO' ERR
 
 usage() {
-printf "%s\n" ""\
+printf "%s\n" "" \
     "Usage: $0 -p [poolname] -n [NEWHOSTNAME] -u [USERNAME] -w [PASSWORD]"
 printf "%s\t%s\n" "" "-s [SAFETYOFF] -- [LISTOFINSTALLDISKS]"\
     "-h" "Displays this help text."\
@@ -62,85 +95,103 @@ exit_abnormal() {
     exit $1
 }
 
-############################
-# Define script variables. #
-############################
-RED='\033[0;31m'
-NC='\033[0m'
+##########################
+# Standard sanity checks.#
+##########################
+if [ "$(id -u)" != "0" ]; then
+    echo "This script must be run with root privileges." 1>&2
+    exit 2
+fi
+if [[ -z $@ ]]; then
+    printf "This script cannot be run without parameters.\n"
+    exit_abnormal
+fi
+
+#########################################
+# Define script variables and constants.#
+#########################################
 printf -v linespacer '*%.0s' {1..20}
 safety_off=false
 readonly redundancy_levels=(single stripe mirror raidz raidz2 raidz3)
-declare -Ar minimum_drives=([single]=1 [stripe]=2 [mirror]=2 [raidz]=3\
+declare -Ar minimum_disks=([single]=1 [stripe]=2 [mirror]=2 [raidz]=3\
         [raidz2]=4 [raidz3]=5)
+verbose=0
+
+##########################
+# User defined variables.#
+##########################
 redundancy=raidz
 vdevs=2
 hot_spares=0
-verbose=0
 
-###################
-# Handle options. #
-###################
+##################
+# Handle options.#
+##################
 saved_args=$@
-while getopts "p:n:u:w:s:dqvh" options; do
-        case "$options" in
+while getopts "p:n:u:w:r:s:dqvh" options; do
+    case "$options" in
         h)
-                usage
-                exit 0
+            usage
+            exit 0
         ;;
         p)
-                poolname=$OPTARG
+            poolname=$OPTARG
         ;;
         n)
-                newhostname=$OPTARG
+            newhostname=$OPTARG
         ;;
         u)
-                username=$OPTARG
+            username=$OPTARG
         ;;
         w)
-                password=$OPTARG
+            password=$OPTARG
+        ;;
+        r)
+            redundancy=$OPTARG
         ;;
         s)
-                if [[ $OPTARG = "U78T56" ]] ; then safety_off=true
-                fi
+            if [[ $OPTARG = "U78T56" ]] ; then safety_off=true
+            fi
         ;;
         d)
-                set -x
+            set -x
         ;;
         q)
-                set +x
-                exec 6>&1
-                exec > /dev/null
+            set +xv
+            exec 6>&1
+            exec > /dev/null
+            quite=true
         ;;
         v)
-                if [[ verbose -lt 2 ]]; then
-                        verbose=$((verbose+1))
-                fi
+            if [[ verbose -lt 2 ]]; then
+                verbose=$((verbose+1))
+            fi
         ;;
         :)
-                printf "Error: -$OPTARG requires an argument.\n"
-                exit_abnormal 1
+            printf "Error: -$OPTARG requires an argument.\n"
+            exit_abnormal 1
         ;;
         *)
-                exit_abnormal 1
+            exit_abnormal 1
         ;;
         esac
 done
 
 shift $((OPTIND-1))
 if [[ -z "$@" ]]; then
-    readonly disks=$(find_disks)
+    readonly disks=($(find_attached_disk))
 else
-    readonly disks=$("$@")
+    readonly disks=($("$@"))
 fi
 
-if [[ ! check_redundancy ]]; then
-    printf "Rendundancy verification error.\n"
+if [[ ! $(check_redundancy $redundancy) = 0 ]]; then
+    printf "%b\n" "${red}Rendundancy verification error.${nc}"
     exit_abnormal
 fi
 
-############################
-# Set verbosity variables. #
-############################
+###########################
+# Set verbosity variables.#
+###########################
 if [[ $verbose -ge 2 ]]; then
     output=1
 else
@@ -148,41 +199,42 @@ else
 fi
 
 # Safety feature added during development to prevent wiping system disks.
-printf "%s\n" "$linespacer" \
-"${red}WARNING:${nc} This script will erase all disks it finds on your system."\
+printf "%b\n" "${yellow}$linespacer${nc}" \
+"${yellow}WARNING:${nc} This script will erase all disks it finds on your system."\
    "You should never download and execute this script without first completely"\
    "reading the documentation at:"\
    "https://github.com/JamesSeiters/Scripts/tree/master/ZFS%20Install"\
-   "$linespacer"
+   "${yellow}$linespacer${nc}"
 
 if $safety_off ; then
-    printf "\n${red}Safety off.${nc}"
-    printf "\nYou have 10 seconds to press CTRL-C to cancel."
+    printf "%b\n" "${red}Safety off.${nc}" \
+    "You have 10 seconds to press CTRL-C to cancel."
     sleep 10
 fi
 
 # For testing only.
+summary
 exit 99
 
-########################
-# Prepare environment. #
-########################
+#######################
+# Prepare environment.#
+#######################
 printf "%s\n" "$linespacer" "Preparing environment." "$linespacer"
 [[ $verbose -ge 1 ]] && printf "Updating package list.\n"
 apt update >& $output
 [[ $verbose -ge 1 ]] && printf "Installing packages.\n"
 apt install --yes debootstrap gdisk zfs-initramfs >& $output
 
-####################
-# Partition disks. #
-####################
+###################
+# Partition disks.#
+###################
 printf "%s\n" "$linespacer" "Partitioning disks." "$linespacer"
 #######
 # TODO:
 # Need to convert this to a loop.
 # Make a dry run option.
 #######
-for disk in drives; do
+for disk in disks; do
     [[ $verbose -ge 1 ]] && printf "Partitioning $disk\n"
     wipefs --all --force $disk >& $output
     sgdisk -Z $disk >& $output
@@ -193,13 +245,13 @@ done
 partprobe >& $output
 sleep 5         # Having problems with part3 not being detected. This is fix?
 
-##########################################
-# Create pool and filesystem containers. #
-##########################################
+#########################################
+# Create pool and filesystem containers.#
+#########################################
 printf "%s\n" "$linespacer" "Creating pool and filesystems." "$linespacer"
 [[ $verbose -ge 1 ]] && printf "Creating root pool.\n"
 zpool create -O atime=on -O relatime=on -O canmount=off -O compression=lz4 -O\
-      mountpoint=/ -R /mnt -f $poolname mirror "${drives[@]/%/-part3}" >&\
+      mountpoint=/ -R /mnt -f $poolname mirror "${disks[@]/%/-part3}" >&\
       $output
 [[ $verbose -ge 2 ]] && printf "Creating dataset containers.\n"
 zfs create -o canmount=off -o mountpoint=none $poolname/ROOT >& $output
@@ -207,9 +259,9 @@ zfs create -o canmount=noauto -o mountpoint=/ $poolname/ROOT/OS >& $output
 [[ $verbose -ge 2 ]] && printf "Mounting pool.\n"
 zfs mount $poolname/ROOT/OS >& $output
 
-#######################
-# Create filesystems. #
-#######################
+######################
+# Create filesystems.#
+######################
 [[ $verbose -ge 1 ]] && printf "Creating filesystems.\n"
 [[ $verbose -ge 2 ]] && printf "Creating home.\n"
 zfs create -o setuid=off $poolname/home >& $output
@@ -225,7 +277,7 @@ zfs create $poolname/var/log >& $output
 zfs create $poolname/var/spool >& $output
 [[ $verbose -ge 2 ]] && printf "Creating var/tmp.\n"
 zfs create -o com.sun:auto-snapshot=false -o exec=on $poolname/var/tmp >&\
-           $output
+    $output
 [[ $verbose -ge 2 ]] && printf "Creating tmp.\n"
 zfs create -o com.sun:auto-snapshot=false -o setuid=off $poolname/tmp >& $output
 [[ $verbose -ge 2 ]] && printf "Setting access and atrribute policies.\n"
@@ -233,17 +285,17 @@ zfs set acltype=posixacl $poolname >& $output
 zfs set xattr=sa $poolname >& $output
 chmod 1777 /mnt/tmp
 
-###############################
-# Install the minimal system. #
-###############################
+##############################
+# Install the minimal system.#
+##############################
 printf "%s\n" "$linespacer" "Installing minimal system." "$linespacer"
 chmod 1777 /mnt/var/tmp
 debootstrap bionic /mnt >& $output
 zfs set devices=off $poolname >& $output
 
-########################################
-# Configure minimal system externally. #
-########################################
+#######################################
+# Configure minimal system externally.#
+#######################################
 printf "%s\n" "$linespacer" "Configuring minimal system." "$linespacer"
 [[ $verbose -ge 2 ]] && printf "Setting hostname."
 sed "s/127.0.1.1.*/127.0.1.1 $newhostname/g" < /etc/hosts > /mnt/etc/hosts
@@ -254,9 +306,9 @@ echo -e "network:\n  version: 2\n  renderer: NetworkManager" >\
 [[ $verbose -ge 2 ]] && printf "Configuring apt sources.\n"
 sed "s/deb cdrom.*//g" < /etc/apt/sources.list > /mnt/etc/apt/sources.list
 
-###############################
-# Configure chroot and enter. #
-###############################
+##############################
+# Configure chroot and enter.#
+##############################
 printf "%s\n" "$linespacer" "Entering chroot." "$linespacer"
 [[ $verbose -ge 2 ]] && printf "Copying setup script.\n"
 cp /home/$SUDO_USER/Documents/Instructionschroot /mnt/root/
@@ -269,7 +321,7 @@ sleep 3
 chroot /mnt /bin/bash ./root/Instructionschroot $saved_args
 
 ###########
-# Cleanup #
+# Cleanup.#
 ###########
 printf "%s\n" "$linespacer" "Cleaning up." "$linespacer"
 # This isn't working yet. It may not matter for what I am doing.
@@ -279,6 +331,12 @@ printf "%s\n" "$linespacer" "Cleaning up." "$linespacer"
 # umount /mnt/proc
 # printf "Exporting ZFS filesystem."
 # zpool export $poolname
+
+#########################
+# Reset option settings.#
+#########################
+exec 1>&6 6>&-
+
 printf "%s\n" "$linespacer" "Finished." "$linespacer"
 printf "Press ctrl-c to cancel reboot.\n"
 sleep 10
