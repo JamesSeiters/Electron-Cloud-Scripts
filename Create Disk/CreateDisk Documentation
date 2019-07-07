@@ -1,0 +1,28 @@
+Create Disk Script Outline
+
+Purpose:
+The script is used to create ZVOL backed VMDK files for use with VirutalBox VMs. Since VirtualBox 6.0 has no builtin support for ZFS backed virtual machines, it is necessary to use this script to ease the creation of such VMs.
+
+Main Functions:
+The script creates ZFS volumes on a user designated storage pool and also creates the corresponding VMDK files in the virtual machine's directory.
+The script will search for existing VMDK files in the VM's directory to get a starting number for the new drive(s).
+The script will report errors from a common function.
+
+Outline:
+The user will enter all of the information used to create a ZVOL backed virtual disk as command line parameters.
+The script will check if optional parameters were assigned values by the user and set default values for those that were not.
+The script will then check that all of the mandatory parameters meet their requirements for safe execution. If they do not the script will halt with an error.
+The script will then check if there are existing disks in the VM's directory and set a variable to the appropriate value that is below the safe limit. If the limit is exceeded, the script will halt with an error.
+The script will then create all of the requested virtual disks informing the user if it was successful in doing so or halting if there is an error.
+
+Notes:
+Virtual Disk Limit:
+	There is an undocumented limit of 2,478 virtual disks that can be attached to a VirtualBox VM. This limit is calculated by adding together all of the virtual disks that can be attached to the available buses. The limits are as follows:
+		1 IDE controller with 4 devices.			4
+		8 SATA controllers with 30 devices each.	240
+		8 SCSI controllers with 15 devices each.	120
+		8 SAS controllers with 8 devices each.		64
+		1 USB controller with 8 devices.			8
+		8 NVMe controllers with 255 devices each.	2040
+		1 Floppy controller with 2 devices.			2
+		Total devices:								2478

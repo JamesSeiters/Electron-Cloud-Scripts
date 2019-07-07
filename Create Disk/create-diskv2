@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# Author: James Seiters
+# Created: 2019/7/6
+# Updated:
+# Copyright: GPLv3
+# Description: A shell script to automate the creation of ZFS backed VM disks.
+#              Created from instructions on LINK 1.
+# LINK 1:
+# https://ramsdenj.com/2016/07/21/
+#		making-a-zvol-backed-virtualbox-vm-on-linux.html
+# Link 2:
+# https://
+
+###########################
+# Define script variables.#
+###########################
+# There is an undocumented limit of 2,478 virtual hard disks on VirtualBox VMs.
+# Refer to the documentation on the GitHub page for details.
+max_disks=2478
+red='\e[38;5;196m'
+yellow='\e[38;5;11m'
+nc='\e[0m'
+
+###########################
+# Define script functions.#
+###########################
+error() {
+	echo -e ""
+}
+
+usage="Usage: $(basename $0) [POOL] [VIRTUAL MACHINE NAME] "\
+	  "[VIRTUAL MACHINE DIRECTORY] [NUMBER OF DRIVES] [SIZE OF DRIVES] "\
+	  "[USER NAME]"
+

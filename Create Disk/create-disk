@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# Author: James Seiters
+# Created: 2018/11/30
+# Updated: 2019/4/16
+# Copyright: GPLv3
+# Description: A shell script to automate the creation of ZFS backed VM disk.
+#              Created from instructions on https://ramsdenj.com/2016/07/21/
+#              making-a-zvol-backed-virtualbox-vm-on-linux.html
+# Usage: create-disk [POOL] [VIRTUAL MACHINE NAME] [VIRTUAL MACHINE DIRECTORY] [NUMBER OF DRIVES] [SIZE OF DRIVES] [USER NAME]
+# LINK 1:
+
+error() {
+#######
+# TODO: Add code to color output.
+#
+#######
+	echo $1
+}
+
+if [ $# -ne 5 ]; then
+  echo "Usage: $(basename $0) [POOL] [VIRTUAL MACHINE NAME] "\
+  "[VIRTUAL MACHINE DIRECTORY] [NUMBER OF DRIVES] [SIZE OF DRIVES] [USER NAME]"
+  exit 1
+fi
+
+pool=${1%/}				#Mandatory.
+vmname=$2				#Mandatory
+vmdirectory=${3%/}		#Mandatory.
+number_of_drives=$4		#Optional. Default: 1.
+size=$5					#Mandatory
+username=$6				#Optional. Default: Current user.
+
+disk_prefix="disk"
+
+####
+# Check parameters.
+####
+if [ -z "$number_of_drives" ]; then
+	number_of_drives=1
+fi
+
+if [ -z "$username" ]; then
+	username=$USER
+
+#######
+# TODO: Need to add check for multiple drives.
+#
+# Disk are now stored in pools named after the virtual machine.
+# 	i.e. development/vm/archdev/disk1 JMS 2019-7-4
+# Add number of drives option. JMS 2019-4-13
+#######
+
+# LOGIC: Need to check for existing disks and set the current disk number to
+#		 last drive +1.
+#		 We also need to check that the maximum number of drives, as per the
+#		 Virtualbox documentation (Link 1), has not been exceeded.
+disk_number=1
+disk_path="/dev/zvol/$pool/$vmname/$disk_prefix$disk_number"
+readonly max_drives=255   # From Virtualbox 6.0 docs NVMe max drives per device.
+
+#LOGIC: Loop through all current existing disks in this vm's pool to get the
+#		next available disk number.
+while [[ $disk_number -le $max_drives && -e $disk_path ]]
+do
+	((disk_number++))
+	if [[ $disk_number -gt $max_drives ]]; then
+		error "Too many disks defined."
+		exit 255
+	fi
+done
+
+# No longer works. disk_path="${disk_path%?}$disk_number", disk_name="${disk_path##*/}"
+
+if zfs create -V "$size"G development/vm/$vmname/$disk_name; then
+    # Using chown works for the short term, but will not survive a reboot.
+    # The udev rule is used to make ownership permanent.
+    chown $username:disk "$disk_path" #/dev/zvol/development/vm/"$vmname"
+    echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\""\
+    "PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$pool/$disk_name\""\
+    "OWNER=\"$username\" GROUP=\"disk\" MODE=\"0750\"" >> \
+    /etc/udev/rules.d/99-local-zvol.rules
+    udevadm control --reload
+
+  # Create the VMDK device file for Virtualbox.
+  VBoxManage internalcommands createrawvmdk -filename \
+    "$vmdirectory/$disk_name.vmdk" -rawdisk "$disk_path"
+    chown $username:$username "$vmdirectory/$disk_name.vmdk"
+else
+  exit 2
+fi
