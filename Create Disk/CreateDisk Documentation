@@ -19,10 +19,10 @@ Notes:
 Virtual Disk Limit:
 	There is an undocumented limit of 2,478 virtual disks that can be attached to a VirtualBox VM. This limit is calculated by adding together all of the virtual disks that can be attached to the available buses. The limits are as follows:
 		1 IDE controller with 4 devices.			4
-		8 SATA controllers with 30 devices each.	240
-		8 SCSI controllers with 15 devices each.	120
-		8 SAS controllers with 8 devices each.		64
+		8 SATA controllers with 30 devices each.		240
+		8 SCSI controllers with 15 devices each.		120
+		8 SAS controllers with 8 devices each.			64
 		1 USB controller with 8 devices.			8
-		8 NVMe controllers with 255 devices each.	2040
+		8 NVMe controllers with 255 devices each.		2040
 		1 Floppy controller with 2 devices.			2
-		Total devices:								2478
+		Total devices:						2478
