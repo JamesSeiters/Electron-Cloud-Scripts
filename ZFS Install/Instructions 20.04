@@ -1,0 +1,360 @@
+# ZFS on Root 20.04
+
+# Step 1
+# 1.1
+# Boot live CD.
+
+# 1.2
+sudo apt-add-repository universe
+sudo apt update
+
+# 1.3
+# sudo apt install --yes openssh-server nano
+
+# 1.4
+sudo -i
+
+# Custom
+# Set variables
+NEWHOSTNAME=ITWorkDesk00001
+NEWUSERNAME=jseiters
+
+# 1.5
+apt install --yes debootstrap gdisk zfs-initramfs
+systemctl stop zed
+
+# Step 2
+
+# 2.1
+disks=(/dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70P1111 /dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70A6813)
+
+# 2.2
+wipefs --all --force ${disks[0]}
+wipefs --all --force ${disks[1]}
+
+# 2.3
+sgdisk -n1:1M:+512M -t1:EF00 -c1:"EFI Boot" ${disks[0]}
+sgdisk -a1 -n5:24K:+1000K -t5:EF02 -c5:"BIOS Boot" ${disks[0]}
+sgdisk -n1:1M:+512M -t1:EF00 -c1:"EFI Boot" ${disks[1]}
+sgdisk -a1 -n5:24K:+1000K -t5:EF02 -c5:"BIOS Boot" ${disks[1]}
+
+# 2.4
+sgdisk -n2:0:+4G -t2:FD00 -c2:"Swap" ${disks[0]}
+sgdisk -n2:0:+4G -t2:FD00 -c2:"Swap" ${disks[1]}
+
+# 2.5
+sgdisk -n3:0:+2G -t3:BE00 -c3:"Boot" ${disks[0]}
+sgdisk -n3:0:+2G -t3:BE00 -c3:"Boot" ${disks[1]}
+
+# 2.6
+sgdisk -n4:0:0 -t4:BF00 -c4:"Root" ${disks[0]}
+sgdisk -n4:0:0 -t4:BF00 -c4:"Root" ${disks[1]}
+
+# 2.7
+zpool create \
+    -o ashift=12 -d \
+    -o feature@async_destroy=enabled \
+    -o feature@bookmarks=enabled \
+    -o feature@embedded_data=enabled \
+    -o feature@empty_bpobj=enabled \
+    -o feature@enabled_txg=enabled \
+    -o feature@extensible_dataset=enabled \
+    -o feature@filesystem_limits=enabled \
+    -o feature@hole_birth=enabled \
+    -o feature@large_blocks=enabled \
+    -o feature@lz4_compress=enabled \
+    -o feature@spacemap_histogram=enabled \
+    -o feature@zpool_checkpoint=enabled \
+    -O acltype=posixacl -O canmount=off -O compression=lz4 \
+    -O devices=off -O normalization=formD -O relatime=on -O xattr=sa \
+    -O mountpoint=/boot -R /mnt $NEWHOSTNAME-bpool mirror ${disks[0]}-part3 ${disks[1]}-part3
+
+# 2.8
+zpool create \
+    -o ashift=12 \
+    -O acltype=posixacl -O canmount=off -O compression=lz4 \
+    -O dnodesize=auto -O normalization=formD -O relatime=on \
+    -O xattr=sa -O mountpoint=/ -R /mnt \
+    $NEWHOSTNAME-rpool mirror ${disks[0]}-part4 ${disks[1]}-part4
+
+# Step 3
+
+# 3.1
+zfs create -o canmount=off -o mountpoint=none $NEWHOSTNAME-rpool/ROOT
+zfs create -o canmount=off -o mountpoint=none $NEWHOSTNAME-bpool/BOOT
+
+# 3.2
+UUID=$(dd if=/dev/urandom of=/dev/stdout bs=1 count=100 2>/dev/null | tr -dc 'a-z0-9' | cut -c-6)
+
+zfs create -o canmount=noauto -o mountpoint=/ \
+    -o com.ubuntu.zsys:bootfs=yes \
+    -o com.ubuntu.zsys:last-used=$(date +%s) $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID
+zfs mount $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID
+
+zfs create -o canmount=noauto -o mountpoint=/boot $NEWHOSTNAME-bpool/BOOT/kubuntu_$UUID
+zfs mount $NEWHOSTNAME-bpool/BOOT/kubuntu_$UUID
+
+# 3.3
+zfs create -o com.ubuntu.zsys:bootfs=no $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/srv
+zfs create -o com.ubuntu.zsys:bootfs=no -o canmount=off $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/usr
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/usr/local
+zfs create -o com.ubuntu.zsys:bootfs=no -o canmount=off $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/games
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/lib
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/lib/AccountsService
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/lib/apt
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/lib/dpkg
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/lib/NetworkManager
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/log
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/mail
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/snap
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/spool
+zfs create $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/var/www
+
+zfs create -o canmount=off -o mountpoint=/ $NEWHOSTNAME-rpool/USERDATA
+zfs create -o com.ubuntu.zsys:bootfs-datasets=$NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID -o canmount=on -o mountpoint=/root $NEWHOSTNAME-rpool/USERDATA/root_$UUID
+
+zfs create $NEWHOSTNAME-bpool/BOOT/kubuntu_$UUID/grub
+
+zfs create -o com.ubuntu.zsys:bootfs=no $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID/tmp
+chmod 1777 /mnt/tmp
+
+# 3.4
+debootstrap focal /mnt
+
+# Step 4
+
+# 4.1
+echo $NEWHOSTNAME > /mnt/etc/hostname
+nano /mnt/etc/hosts
+
+Add a line:
+127.0.1.1       $NEWHOSTNAME
+or if the system has a real name in DNS:
+127.0.1.1       FQDN $NEWHOSTNAME
+
+# 4.2
+nano /mnt/etc/netplan/01-netcfg.yaml
+
+network:
+  version: 2
+  ethernets:
+    NAME:
+      dhcp4: true
+
+# 4.3
+nano /mnt/etc/apt/sources.list
+
+deb http://archive.ubuntu.com/ubuntu focal main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu focal-backports main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu focal-security main restricted universe multiverse
+
+# 4.4
+mount --rbind /dev  /mnt/dev
+mount --rbind /proc /mnt/proc
+mount --rbind /sys  /mnt/sys
+chroot /mnt /usr/bin/env UUID=$UUID bash --login
+
+# Custom
+# Set variables
+NEWHOSTNAME=ITWorkDesk00001
+NEWUSERNAME=jseiters
+disks=(/dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70P1111 /dev/disk/by-id/ata-WDC_WD1600HLFS-75G6U1_WD-WXD1E70A6813)
+
+# 4.5
+apt update
+
+dpkg-reconfigure locales
+
+dpkg-reconfigure tzdata
+
+apt install --yes nano
+
+# 4.6
+# Not needed.
+
+# 4.7
+apt install --yes dosfstools
+
+mkdosfs -F 32 -s 1 -n EFI ${disks[0]}-part1
+mkdosfs -F 32 -s 1 -n EFI ${disks[1]}-part1
+mkdir /boot/efi1
+mkdir /boot/efi2
+echo UUID=$(blkid -s UUID -o value ${disks[0]}-part1) /boot/efi1 vfat umask=0022,fmask=0022,dmask=0022 0 1 >> /etc/fstab
+echo UUID=$(blkid -s UUID -o value ${disks[1]}-part1) /boot/efi2 vfat umask=0022,fmask=0022,dmask=0022 0 1 >> /etc/fstab
+mount /boot/efi1
+mount /boot/efi2
+
+# 4.8
+# Not needed
+
+# 4.9
+apt install --yes grub-pc linux-image-generic zfs-initramfs zsys
+
+# 4.10
+dpkg --purge os-prober
+
+# 4.11
+passwd
+
+# 4.12
+apt install --yes mdadm
+# Adjust the level (ZFS raidz = MD raid5, raidz2 = raid6) and
+# raid-devices if necessary and specify the actual devices.
+mdadm --create /dev/md0 --metadata=1.2 --level=mirror --raid-devices=2 ${disks[0]}-part2 ${disks[1]}-part2
+mkswap -f /dev/md0
+echo UUID=$(blkid -s UUID -o value /dev/md0) none swap discard 0 0 >> /etc/fstab
+swapon -a
+
+# 4.13
+# Not needed.
+
+# 4.14
+addgroup --system lpadmin
+addgroup --system lxd
+addgroup --system sambashare
+
+# 4.15
+# Not needed.
+
+#Step 5
+
+# 5.1
+grub-probe /boot
+
+# 5.2
+update-initramfs -c -k all
+
+# 5.3
+nano /etc/default/grub
+# Add init_on_alloc=0 to: GRUB_CMDLINE_LINUX_DEFAULT
+# Save and quit.
+
+# 5.4
+nano /etc/default/grub
+# Comment out: GRUB_TIMEOUT_STYLE=hidden
+# Set: GRUB_TIMEOUT=5
+# Below GRUB_TIMEOUT, add: GRUB_RECORDFAIL_TIMEOUT=5
+# Remove quiet and splash from: GRUB_CMDLINE_LINUX_DEFAULT
+# Uncomment: GRUB_TERMINAL=console
+# Save and quit.
+
+# 5.5
+update-grub
+# ERROR: cannot open 'bpool/BOOT/kubuntu_9oqxmg': dataset does not exist
+
+# 5.6
+grub-install ${disks[0]}
+grub-install ${disks[1]}
+
+# 5.7
+systemctl mask grub-initrd-fallback.service
+
+# 5.8
+mkdir /etc/zfs/zfs-list.cache
+touch /etc/zfs/zfs-list.cache/$NEWHOSTNAME-bpool
+touch /etc/zfs/zfs-list.cache/$NEWHOSTNAME-rpool
+ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
+zed -F &
+
+cat /etc/zfs/zfs-list.cache/$NEWHOSTNAME-bpool
+cat /etc/zfs/zfs-list.cache/$NEWHOSTNAME-rpool
+
+#If either is empty, force a cache update and check again:
+
+zfs set canmount=noauto $NEWHOSTNAME-bpool/BOOT/kubuntu_$UUID
+zfs set canmount=noauto $NEWHOSTNAME-rpool/ROOT/kubuntu_$UUID
+
+fg
+#Press Ctrl-C.
+
+sed -Ei "s|/mnt/?|/|" /etc/zfs/zfs-list.cache/*
+
+# Step 6
+
+# 6.1
+# Not needed.
+
+# Custom
+nano /etc/
+# 6.2
+exit
+
+# 6.3
+mount | grep -v zfs | tac | awk '/\/mnt/ {print $3}' | xargs -i{} umount -lf {}
+zpool export -a
+
+# 6.4
+reboot
+
+# Custom
+# Set variables
+NEWHOSTNAME=ITWorkDesk00001
+NEWUSERNAME=jseiters
+
+# 6.5
+UUID=$(dd if=/dev/urandom of=/dev/stdout bs=1 count=100 2>/dev/null | tr -dc 'a-z0-9' | cut -c-6)
+ROOT_DS=$(zfs list -o name | awk '/ROOT\/kubuntu_/{print $1;exit}')
+zfs create -o com.ubuntu.zsys:bootfs-datasets=$ROOT_DS -o canmount=on -o mountpoint=/home/$NEWUSERNAME $NEWHOSTNAME-rpool/USERDATA/$NEWUSERNAME_$UUID
+adduser $NEWUSERNAME
+
+cp -a /etc/skel/. /home/$NEWUSERNAME
+chown -R $NEWUSERNAME:$NEWUSERNAME /home/$NEWUSERNAME
+usermod -a -G adm,cdrom,dip,lpadmin,lxd,plugdev,sambashare,sudo $NEWUSERNAME
+
+# Step 7
+
+# 7.1
+apt dist-upgrade --yes
+
+# 7.2
+apt install --yes ubuntu-standard
+
+apt install --yes kubuntu-desktop
+#nano /etc/gdm3/custom.conf
+# In the [daemon] section, add: InitialSetupEnable=false
+
+rm /etc/netplan/01-netcfg.yaml
+nano /etc/netplan/01-network-manager-all.yaml
+
+network:
+  version: 2
+  renderer: NetworkManager
+
+# 7.3
+for file in /etc/logrotate.d/* ; do
+    if grep -Eq "(^|[^#y])compress" "$file" ; then
+        sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "$file"
+    fi
+done
+
+# 7.4
+reboot
+
+# Step 8
+
+# 8.1
+#Logon
+
+# 8.2
+sudo usermod -p '*' root
+
+# 8.3
+nano /etc/ssh/sshd_config
+# Remove: PermitRootLogin yes
+
+systemctl restart ssh
+
+# 8.4
+sudo nano /etc/default/grub
+# Uncomment: GRUB_TIMEOUT_STYLE=hidden
+# Add quiet and splash to: GRUB_CMDLINE_LINUX_DEFAULT
+# Comment out: GRUB_TERMINAL=console
+# Save and quit.
+
+sudo update-grub
+
+# 8.5
+# Not needed.
+

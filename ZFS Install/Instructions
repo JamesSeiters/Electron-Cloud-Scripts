@@ -2,13 +2,14 @@
 
 # Author: James Seiters
 # Created: 2018/11/30
-# Updated: 2018/12/3
+# Updated: 2020/6/6
 # Copyright: GPLv3
 # Description: A shell script to automate the creation of ZFS backed VM disk.
 #              Created from instructions on https://ramsdenj.com/2016/07/21/
 #              making-a-zvol-backed-virtualbox-vm-on-linux.html
 #######
 # TODO:
+# Need to update for 20.04.
 # DONE Need to make the function that finds all of the disk on the system and
 #      stores them in an array.
 # Need to create function that parses the redundancy option.
@@ -16,9 +17,15 @@
 # Run tests to make sure the argument passing is working in the chroot script.
 # Implement a dry run with the set -n option and -x.
 #######
-###########################
-# Define script variables.#
-###########################
+
+##########################################
+# Define script variables and constants. #
+##########################################
+printf -v linespacer '*%.0s' {1..20}
+safety_off=false
+readonly redundancy_levels=(single stripe mirror raidz raidz2 raidz3)
+declare -Ar minimum_disks=([single]=1 [stripe]=2 [mirror]=2 [raidz]=3 [raidz2]=4 [raidz3]=5)
+verbose=0
 red='\e[38;5;196m'
 yellow='\e[38;5;11m'
 nc='\e[0m'
@@ -26,6 +33,7 @@ nc='\e[0m'
 find_attached_disk () {
     pushd /sys/block >& /dev/null
     shopt -s nullglob
+
     for device in *; do
         if [[ $(cat /sys/block/$device/removable) = 0 ]]; then
             link_path=$(readlink -f $device)
@@ -37,6 +45,7 @@ find_attached_disk () {
             fi
         fi
     done
+
     shopt -u nullglob
     popd >& /dev/null
 }
@@ -76,18 +85,18 @@ summary() {
 #trap 'err_report $LINENO' ERR
 
 usage() {
-printf "%s\n" "" \
-    "Usage: $0 -p [poolname] -n [NEWHOSTNAME] -u [USERNAME] -w [PASSWORD]"
-printf "%s\t%s\n" "" "-s [SAFETYOFF] -- [LISTOFINSTALLDISKS]"\
-    "-h" "Displays this help text."\
-    "-p" "Name of the pool to create."\
-    "-n" "Host name for the new installation."\
-    "-u" "User name of the first user."\
-    "-w" "Password for the first user."\
-    "-s" "Turn safety off by entering the proper code."\
-    "--" "List of disk(s) to use for installation."
-printf "%s\n" "" "For more information see:"\
-   "https://github.com/JamesSeiters/Scripts/tree/master/ZFS%20Install/README.md"
+    printf "%s\n" "" \
+        "Usage: $0 -p [poolname] -n [NEWHOSTNAME] -u [USERNAME] -w [PASSWORD]"
+    printf "%s\t%s\n" "" "-s [SAFETYOFF] -- [LISTOFINSTALLDISKS]"\
+        "-h" "Displays this help text."\
+        "-p" "Name of the pool to create."\
+        "-n" "Host name for the new installation."\
+        "-u" "User name of the first user."\
+        "-w" "Password for the first user."\
+        "-s" "Turn safety off by entering the proper code."\
+        "--" "List of disk(s) to use for installation."
+    printf "%s\n" "" "For more information see:"\
+    "https://github.com/JamesSeiters/Scripts/tree/master/ZFS%20Install/README.md"
 }
 
 exit_abnormal() {
@@ -95,27 +104,17 @@ exit_abnormal() {
     exit $1
 }
 
-##########################
-# Standard sanity checks.#
-##########################
+###########################
+# Standard sanity checks. #
+###########################
 if [ "$(id -u)" != "0" ]; then
     echo "This script must be run with root privileges." 1>&2
     exit 2
 fi
 if [[ -z $@ ]]; then
     printf "This script cannot be run without parameters.\n"
-    exit_abnormal
+    exit_abnormal 3
 fi
-
-#########################################
-# Define script variables and constants.#
-#########################################
-printf -v linespacer '*%.0s' {1..20}
-safety_off=false
-readonly redundancy_levels=(single stripe mirror raidz raidz2 raidz3)
-declare -Ar minimum_disks=([single]=1 [stripe]=2 [mirror]=2 [raidz]=3\
-        [raidz2]=4 [raidz3]=5)
-verbose=0
 
 ##########################
 # User defined variables.#

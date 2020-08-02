@@ -1,0 +1,5 @@
+vdev1=(pci-0000:06:00.0-sas-phy0-lun-0 pci-0000:06:00.0-sas-phy1-lun-0 pci-0000:06:00.0-sas-phy2-lun-0 pci-0000:06:00.0-sas-phy3-lun-0)
+vdev2=(pci-0000:06:00.0-sas-phy4-lun-0 pci-0000:06:00.0-sas-phy5-lun-0 pci-0000:06:00.0-sas-phy6-lun-0 pci-0000:06:00.0-sas-phy7-lun-0)
+slog=(pci-0000:00:11.0-ata-4 pci-0000:00:11.0-ata-6)
+arc=(pci-0000:00:11.0-ata-3 pci-0000:00:11.0-ata-5)
+

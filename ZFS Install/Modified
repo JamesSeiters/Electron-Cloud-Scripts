@@ -1,0 +1,222 @@
+sudo -i
+
+apt-add-repository universe
+apt update
+apt install --yes debootstrap gdisk zfs-initramfs
+
+find_attached_disk () {
+    pushd /sys/block >& /dev/null
+    shopt -s nullglob
+
+    for device in *; do
+        if [[ $(cat /sys/block/$device/removable) = 0 ]]; then
+            link_path=$(readlink -f $device)
+            if [[ ! $link_path =~ .*virtual*. && ! $link_path =~ .*usb*. ]]; then
+                for symlink in $(udevadm info -q symlink $PWD/$device); do
+                    [[ $symlink =~ .*by-id*. && ! $symlink =~ .*wwn*. ]] \
+                    && printf "/dev/%s " $symlink
+                done
+            fi
+        fi
+    done
+
+    shopt -u nullglob
+    popd >& /dev/null
+}
+disks=($(find_attached_disk))
+
+for disk in ${disks[@]}; do
+    wipefs --all --force $disk
+    sgdisk -a1 -n1:34:295 -t1:EF02 -c1:"BIOS boot" $disk
+    sgdisk -a1 -n2:296:1573159 -t2:8300 -c2:"ZFS Boot" $disk
+    sgdisk -a1 -n3:0:0 -t3:8300 -c3:"ZFS Root" $disk
+done
+partprobe
+sleep 5         # Having problems with part3 not being detected. This is fix?
+
+zpool create -o ashift=9 -d -f \
+    -o feature@async_destroy=enabled \
+    -o feature@bookmarks=enabled \
+    -o feature@embedded_data=enabled \
+    -o feature@empty_bpobj=enabled \
+    -o feature@enabled_txg=enabled \
+    -o feature@extensible_dataset=enabled \
+    -o feature@filesystem_limits=enabled \
+    -o feature@hole_birth=enabled \
+    -o feature@large_blocks=enabled \
+    -o feature@lz4_compress=enabled \
+    -o feature@spacemap_histogram=enabled \
+    -o feature@userobj_accounting=enabled \
+    -O acltype=posixacl -O canmount=off -O compression=lz4 -O devices=off \
+    -O normalization=formD -O relatime=on -O xattr=sa \
+    -O mountpoint=/ -R /mnt ITWorkDesk00002-Boot mirror ${disks[0]}-part2 ${disks[1]}-part2
+
+zpool create -o ashift=9 -f \
+    -O acltype=posixacl -O canmount=off -O compression=lz4 \
+    -O dnodesize=auto -O normalization=formD -O relatime=on -O xattr=sa \
+    -O mountpoint=/ -R /mnt ITWorkDesk00002-Root mirror ${disks[0]}-part3 ${disks[1]}-part3
+
+zfs create -o canmount=off -o mountpoint=none ITWorkDesk00002-Root/ROOT
+zfs create -o canmount=off -o mountpoint=none ITWorkDesk00002-Boot/BOOT
+
+zfs create -o canmount=noauto -o mountpoint=/ ITWorkDesk00002-Root/ROOT/kubuntu
+zfs mount ITWorkDesk00002-Root/ROOT/kubuntu
+
+zfs create -o canmount=noauto -o mountpoint=/boot ITWorkDesk00002-Boot/BOOT/kubuntu
+zfs mount ITWorkDesk00002-Boot/BOOT/kubuntu
+
+zfs create                                 ITWorkDesk00002-Root/home
+zfs create -o mountpoint=/root             ITWorkDesk00002-Root/home/root
+zfs create -o canmount=off                 ITWorkDesk00002-Root/var
+zfs create -o canmount=off                 ITWorkDesk00002-Root/var/lib
+zfs create                                 ITWorkDesk00002-Root/var/log
+zfs create                                 ITWorkDesk00002-Root/var/spool
+
+zfs create -o com.sun:auto-snapshot=false  ITWorkDesk00002-Root/var/cache
+zfs create -o com.sun:auto-snapshot=false  ITWorkDesk00002-Root/var/tmp
+chmod 1777 /mnt/var/tmp
+
+zfs create                                 ITWorkDesk00002-Root/opt
+zfs create -o canmount=off                 ITWorkDesk00002-Root/usr
+zfs create                                 ITWorkDesk00002-Root/usr/local
+zfs create                                 ITWorkDesk00002-Root/var/snap
+zfs create -o com.sun:auto-snapshot=false  ITWorkDesk00002-Root/tmp
+chmod 1777 /mnt/tmp
+
+debootstrap bionic /mnt
+
+zfs set devices=off ITWorkDesk00002-Root
+
+echo ITWorkDesk00002 > /mnt/etc/hostname
+sed "s/127.0.1.1.*/127.0.1.1 ITWorkDesk00002/g" < /etc/hosts > /mnt/etc/hosts
+echo -e "network:\n  version: 2\n  renderer: NetworkManager" >\
+        /mnt/etc/netplan/01-NetowrkManager.yaml
+# sed "s/deb cdrom.*//g" < /etc/apt/sources.list > /mnt/etc/apt/sources.list
+echo -e "deb http://archive.ubuntu.com/ubuntu bionic main universe\ndeb-src http://archive.ubuntu.com/ubuntu bionic main universe
+
+deb http://security.ubuntu.com/ubuntu bionic-security main universe
+deb-src http://security.ubuntu.com/ubuntu bionic-security main universe
+
+deb http://archive.ubuntu.com/ubuntu bionic-updates main universe
+deb-src http://archive.ubuntu.com/ubuntu bionic-updates main universe" > /mnt/etc/apt/sources.list
+
+mount --rbind /dev  /mnt/dev
+mount --rbind /proc /mnt/proc
+mount --rbind /sys  /mnt/sys
+chroot /mnt /usr/bin/env bash --login
+
+ln -s /proc/self/mounts /etc/mtab
+apt update
+
+dpkg-reconfigure locales
+
+dpkg-reconfigure tzdata
+
+apt install --yes nano
+
+apt install --yes --no-install-recommends linux-image-generic
+
+apt install --yes zfs-initramfs
+
+apt install --yes grub-pc
+
+passwd
+
+touch /etc/systemd/system/zfs-import-ITWorkDesk00002-Boot.service
+echo "[Unit]
+  DefaultDependencies=no
+  Before=zfs-import-scan.service
+  Before=zfs-import-cache.service
+
+[Service]
+  Type=oneshot
+  RemainAfterExit=yes
+  ExecStart=/sbin/zpool import -N -o cachefile=none ITWorkDesk00002-Boot
+
+  [Install]
+  WantedBy=zfs-import.target" > /etc/systemd/system/zfs-import-ITWorkDesk00002-Boot.service
+
+systemctl enable zfs-import-ITWorkDesk00002-Boot.service
+
+addgroup --system lpadmin
+addgroup --system sambashare
+
+grub-probe /boot
+
+update-initramfs -u -k all
+
+GRUB_CMDLINE_LINUX="root=ZFS=ITWorkDesk00002-Root/ROOT/kubuntu"
+
+GRUB_TIMEOUT=5
+GRUB_RECORDFAIL_TIMEOUT=5
+
+update-grub
+
+grub-install $DISK
+
+ls /boot/grub/*/zfs.mod
+
+zfs set mountpoint=legacy ITWorkDesk00002-Boot/BOOT/kubuntu
+echo ITWorkDesk00002-Boot/BOOT/ubuntu /boot zfs \
+    nodev,relatime,x-systemd.requires=zfs-import-ITWorkDesk00002-Boot.service 0 0 >> /etc/fstab
+
+zfs set mountpoint=legacy ITWorkDesk00002-Root/var/log
+echo ITWorkDesk00002-Root/var/log /var/log zfs nodev,relatime 0 0 >> /etc/fstab
+
+zfs set mountpoint=legacy ITWorkDesk00002-Root/var/spool
+echo ITWorkDesk00002-Root/var/spool /var/spool zfs nodev,relatime 0 0 >> /etc/fstab
+
+zfs set mountpoint=legacy ITWorkDesk00002-Root/var/log
+echo ITWorkDesk00002-Root/var/log /var/log zfs nodev,relatime 0 0 >> /etc/fstab
+
+zfs set mountpoint=legacy ITWorkDesk00002-Root/var/tmp
+echo ITWorkDesk00002-Root/var/tmp /var/tmp zfs nodev,relatime 0 0 >> /etc/fstab
+
+zfs set mountpoint=legacy ITWorkDesk00002-Root/tmp
+echo ITWorkDesk00002-Root/tmp /tmp zfs nodev,relatime 0 0 >> /etc/fstab
+
+zfs snapshot ITWorkDesk00002-Boot/BOOT/kubuntu@install
+zfs snapshot ITWorkDesk00002-Root/ROOT/kubuntu@install
+
+exit
+
+mount | grep -v zfs | tac | awk '/\/mnt/ {print $3}' | xargs -i{} umount -lf {}
+zpool export -a
+
+reboot
+
+zfs create ITWorkDesk00002-Root/home/jseiters
+adduser jseiters
+cp -a /etc/skel/. /home/jseiters
+chown -R jseiters:jseiters /home/jseiters
+
+usermod -a -G adm,cdrom,dip,lpadmin,plugdev,sambashare,sudo jseiters
+
+dpkg-reconfigure grub-pc
+
+zfs create -V 4G -b $(getconf PAGESIZE) -o compression=zle \
+    -o logbias=throughput -o sync=always \
+    -o primarycache=metadata -o secondarycache=none \
+    -o com.sun:auto-snapshot=false ITWorkDesk00002-Root/swap
+
+mkswap -f /dev/zvol/ITWorkDesk00002-Root/swap
+echo /dev/zvol/ITWorkDesk00002-Root/swap none swap discard 0 0 >> /etc/fstab
+echo RESUME=none > /etc/initramfs-tools/conf.d/resume
+
+swapon -av
+
+apt dist-upgrade --yes
+
+apt install --yes ubuntu-standard
+
+apt install --yes kubuntu-desktop
+
+for file in /etc/logrotate.d/* ; do
+    if grep -Eq "(^|[^#y])compress" "$file" ; then
+        sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "$file"
+    fi
+done
+
+reboot
+
+sudo usermod -p '*' root

@@ -15,6 +15,14 @@ The script will then check that all of the mandatory parameters meet their requi
 The script will then check if there are existing disks in the VM's directory and set a variable to the appropriate value that is below the safe limit. If the limit is exceeded, the script will halt with an error.
 The script will then create all of the requested virtual disks informing the user if it was successful in doing so or halting if there is an error.
 
+Parameters:
+pool_name -p: The name of a ZFS pool which will contain the created ZVOLs.
+vm_name -n: The name of the virtual machine the disks will be attached to.
+vm_directory -d: The directory that stores the virtual machines files.
+number_of_disks -c: The number of drives to create.
+disk_size -s: The size of the drive.
+user_name -u: The user too set as the owner of the ZVOL file.
+
 Notes:
 Virtual Disk Limit:
 	There is an undocumented limit of 2,478 virtual disks that can be attached to a VirtualBox VM. This limit is calculated by adding together all of the virtual disks that can be attached to the available buses. The limits are as follows:
@@ -26,3 +34,9 @@ Virtual Disk Limit:
 		8 NVMe controllers with 255 devices each.	2040
 		1 Floppy controller with 2 devices.			2
 		Total devices:								2478
+
+Specifying size of volumes and datasets:
+	The zfs create command accepts a wide variety of unit symbols when creating a ZVOL. The sizes can range from kilobytes to petabytes. Any of the standard size symbols can be used without regard to the case of the letters. For example, kib and kIB are acceptable for use as the symbols for kilobytes.
+
+Usage:
+create-disk -p [POOL] -n [VIRTUAL MACHINE NAME] -d [VIRTUAL MACHINE DIRECTORY] -c [NUMBER OF DRIVES] -s [SIZE OF DRIVES] -u [USER NAME]

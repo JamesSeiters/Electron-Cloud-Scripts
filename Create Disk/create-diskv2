@@ -2,20 +2,23 @@
 
 # Author: James Seiters
 # Created: 2019/7/6
-# Updated: 2019/7/30
+# Updated: 2020/8/2
 # Copyright: GPLv3
-# Description: A shell script to automate the creation of ZFS backed VM disks.
-#              Created from instructions on LINK 1.
-# LINK 1:
-# https://ramsdenj.com/2016/07/21/
-#		making-a-zvol-backed-virtualbox-vm-on-linux.html
-# LINK 2:
-# https://github.com/JamesSeiters/Scripts/blob/master/Create%20Disk/
-#		CreateDisk%20Documentation
+# Description: A shell script to automate the creation of ZFS backed VM disks. Created from instructions on LINK 1.
+# Version: 0.1
+# 
+# LINK 1: # https://ramsdenj.com/2016/07/21/making-a-zvol-backed-virtualbox-vm-on-linux.html
+# LINK 2: # https://github.com/JamesSeiters/Scripts/blob/master/Create%20Disk/CreateDisk%20Documentation
+#
+# Exit codes: 125 - Permission error, 124 - Parameter error, 123 - Precondition error.
 
-#####################
-# Set Shell Options.#
-#####################
+#######
+# TODO: Add option to create a single disk with custom number.
+#######
+
+######################
+# Set Shell Options. #
+######################
 shopt -s checkwinsize
 (:)
 
@@ -70,11 +73,11 @@ error_exit() {
     shift
   done
 
-    printf "${error_color}%s${nc}\n\n" "$error_lead"
-    printf "%s\n\n" "$error_text" "$error_help" | fold -s -w $COLUMNS
+  printf "${error_color}%s${nc}\n\n" "$error_lead"
+  printf "%s\n\n" "$error_text" "$error_help" | fold -s -w $COLUMNS
 
-    local reg_ex='^([1-9]?[1-9]|2[0-4][0-9]|25[0-5])$'
-    [[ $error_status =~ $reg_ex ]] && exit $error_status || true
+  local reg_ex='^([1-9][0-9]{0,1}|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$'
+  [[ $error_status =~ $reg_ex ]] && exit $error_status || true
 }
 
 usage() {
@@ -84,50 +87,55 @@ usage() {
         "$(basename $0) -p [POOL] -n [VIRTUAL MACHINE NAME] -d [VIRTUAL MACHINE DIRECTORY] -c [NUMBER OF DRIVES] -s [SIZE OF DRIVES] -u [USER NAME]"\
         "" "Options:"
   printf "%s\t%s\n"\
-        "-p" "Name of the ZFS pool which holds the ZVOLs."\
+        "-p" "Name of the ZFS dataset to create disks in."\
         "-n" "Name of the VM to attach disks to."\
-        "-d" "Directory where the virtual machines files are stored."\
+        "-d" "Directory where the virtual machines disk files are stored."\
         "-c" "Number of disks to create."\
         "-s" "Size of the disks."\
-        "-u" "The user to set as the owner of the ZVOL files."
+        "-u" "The user to set as owner of the ZVOL devices."
 }
 
 create_vbox_disk() {
-  # Creates a ZVOL and links it to the VMDK file. IF there is no existing dataset for the VM, it is created as well.
+  # Creates a ZVOL and links it to the VMDK file. If there is no existing dataset for the VM, it is created as well.
   local disk_name="${vm_name}-disk$1"
   local ZVOL_name="$pool_name/$vm_name/$disk_name"
 
   # Create a new dataset for this virtual machine if one doesn't exist.
-  output="$(zfs create "$pool_name/$vm_name" 2>&1)"
-  [[ $? -ne 0 ]] && error_exit -e "ZFS filesystem creation failed." -t "$output"
+  # ZFS does not create directories for empty data sets. The zfs list command must be used to check if a dataset exists.
+  if ! [[ $(zfs list "$pool_name/$vm_name" 2>/dev/null) ]] ; then
+    output="$(zfs create "$pool_name/$vm_name" 2>&1)"
+    [[ $? -ne 0 ]] && error_exit -e "ZFS dataset creation failed." -t "$output" -s $?
+  fi
 
-  output="$(zfs create -V $disk_size "$ZVOL_name" 2>&1)"
-
+  output="$(zfs create -V "$disk_size" "$ZVOL_name" 2>&1)"
+  
   if [[ $? -eq 0 ]] ; then
-# Testing.
-#   output="$(chown $user_name:disk "/dev/zvol/$ZVOL_name" 2>&1)"
-#   [[ $? -ne 0 ]] && error_exit -w "chown failed for the ZVOL file." -t "$output"
-
-    # Using chown works for the short term, but will not survive a reboot. The udev rule is used to make ownership permanent.
-    echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\" PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$ZVOL_name\""\
-         "OWNER=\"$user_name\" GROUP=\"disk\" MODE=\"0750\"" >> /etc/udev/rules.d/999-local-zvol.rules
-    output="$(udevadm control --reload 2>&1)"
-    [[ $? -ne 0 ]] && error_exit -w "udevadm failed." -t "$output"
-
-    # Create the VMDK device file for Virtualbox.
-    output="$(VBoxManage internalcommands createrawvmdk -filename "$vm_directory/$vm_name/$disk_name.vmdk" -rawdisk "/dev/zvol/$ZVOL_name" 2>&1)"
-    [[ $? -ne 0 ]] && error_exit -e "VMDK file creation failed." -t "$output"
+    # Files created in the /dev/zvol folder do not contain spaces in the names.
+    # A + symbol is used instead, therefore we must use tr " " + to get the proper filename.
+    output="$(VBoxManage internalcommands createrawvmdk -filename "$vm_directory/$vm_name/$disk_name.vmdk"\
+                                                        -rawdisk $(echo "/dev/zvol/$ZVOL_name" | tr " " +) 2>&1)"
+    [[ $? -ne 0 ]] && error_exit -e "VMDK file creation failed." -t "$output" -$?
 
     output="$(chown $user_name:$user_name "$vm_directory/$vm_name/$disk_name.vmdk")"
     [[ $? -ne 0 ]] && error_exit -w "chown failed for the virtual machine's disk file." -t "$output"
+    
+    output="$(chown $user_name:disk $(echo "/dev/zvol/$ZVOL_name" | tr " " +))"
+    [[ $? -ne 0 ]] && error_exit -w "chown failed for the ZVOL file." -t "$output"
+
+    # Using chown works for the short term, but will not survive a reboot. The udev rule is used to make ownership permanent.
+    echo "KERNEL==\"zd*\" SUBSYSTEM==\"block\" ACTION==\"add|change\" PROGRAM=\"/lib/udev/zvol_id /dev/%k\" RESULT==\"$ZVOL_name\""\
+         "OWNER=\"$user_name\" GROUP=\"disk\" MODE=\"0750\"" >> /etc/udev/rules.d/99-local-zvol.rules
+    output="$(udevadm control --reload 2>&1)"
+    [[ $? -ne 0 ]] && error_exit -w "udevadm reload failed." -t "$output"
 
   else
-    error_exit -e "ZVOL creation failed." -t "$output"
+    error_exit -e "ZVOL creation failed." -t "$output" -s $?
   fi
 }
 
-existing_disk_count() {
+get_exisiting_disk_count() {
   # Returns the number of disk files in the provided dataset.
+  local vm_name=$(echo "$vm_name" | tr " " +)
   if ! [[ -d /dev/zvol/$pool_name/$vm_name ]] ; then
     echo 0
     return
@@ -141,21 +149,26 @@ existing_disk_count() {
       ((disk_count++))
     fi
   done
-
+  
   echo $disk_count
 }
 
-###################
-# Standard checks.#
-###################
+####################
+# Standard checks. #
+####################
 if [ "$(id -u)" != "0" ]; then
-  error_exit -e "Insufficient privilages." -t "This script must be run with root privileges."
+  error_exit -e "Insufficient privilages." -t "This script must be run with root privileges." -s 125
 fi
+
+################################
+# Set default parameter values #
+################################
+number_of_disks=1
 
 #########################
 # Parameter processing. #
 #########################
-[[ $# -eq 0 ]] && error_exit -e "Command must be run with parameters." -t "$(usage)" -h "For more information see: $help_link"
+[[ $# -eq 0 ]] && error_exit -e "Command must be run with parameters." -t "$(usage)" -h "For more information see: $help_link" -s 124
 
 while getopts ":hp:n:d:c:s:u:" options; do
 
@@ -165,29 +178,39 @@ while getopts ":hp:n:d:c:s:u:" options; do
       exit 0
       ;;
     p)
+      if ! [[ $(zpool list "$OPTARG" 2>/dev/null) ]] ; then
+        error_exit -e "Pool $OPTARG does not exist." -t "The pool that stores the virtual machine ZVOLs must be created prior to executing this script."\
+                   -h "For more information see: $help_link" -s 124
+      fi
+      
       pool_name=${OPTARG%/}
       ;;
     n)
       vm_name=$OPTARG
       ;;
     d)
+      if ! [[ -d $OPTARG ]] ; then
+        error_exit -e "VM Directory $OPTARG does not exist." -t "The directory that stores virtual machine VMDK files must be created prior to executing this script."\
+                   -h "For more information see: $help_link" -s 124
+      fi
+      
       vm_directory=${OPTARG%/}
       ;;
     c)
-      valid_count='^(1?[0-9]?[0-9]?[1-9]|2[0-4][0-7][0-8])$'
+      valid_count='^([1-9]|[1-9][0-9]{1,2}|1[0-9]{1,3}|2[0-4][0-7][0-8])$'
 
       if ! [[ $OPTARG =~ $valid_count && ${OPTARG//[!0-9]/} -le $max_disks ]] ; then
-        error_exit -e "Invalid number of disks." -t "Number of disks must be a positive, whole number greater than 0 and less than $(($max_disks + 1))."\
-                  -h "For more information see: $help_link"
+        error_exit -e "Invalid number of disks: $OPTARG" -t "Number of disks must be a positive, whole number greater than 0 and less than $(($max_disks + 1))."\
+                   -h "For more information see: $help_link" -s 124
       fi
       number_of_disks=$OPTARG
       ;;
     s)
-      re_valid_size='^\.?[0-9]+[bkmgtpe](ib|b)?$'
+      re_valid_size='^\.?[0-9]+[kmgtpe](ib|b)?$'
       shopt -s nocasematch
 
       if ! [[ $OPTARG =~ $re_valid_size ]] ; then
-        error_exit -t "Invalid disk size." -h "For more information see: $help_link"
+        error_exit -e "Invalid disk size: $OPTARG" -t "Please enter a valid disk size in the form of an interger number followed by a valid unit symbol." -h "For more information see: $help_link" -s 124
       fi
 
       shopt -u nocasematch
@@ -197,32 +220,36 @@ while getopts ":hp:n:d:c:s:u:" options; do
       user_name=$OPTARG
       ;;
     :)
-      error_exit -e "Parameter required." -t "Option -$OPTARG requires an argument."
+      error_exit -e "Parameter required." -t "Option -$OPTARG requires an argument." -s 124
       ;;
     *)
-      error_exit -t "Unknown option: -${OPTARG}."
+      error_exit -e "Unknown option: -${OPTARG}." -t "Please enter a valid option." -s 124
       ;;
   esac
 done
 
 for variable in ${!parameters[@]} ; do
-  [[ ${!variable} ]] || error_exit -e "Parameter cannot be empty."\
-                                   -t "${parameters[$variable]} is a mandatory parameter and must have a valid value."
+  [[ ${!variable} ]] || error_exit -e "Parameter cannot be empty." -t "${parameters[$variable]} is a mandatory parameter and must have a valid value." -s 124
 done
+
+if ! [[ -d $vm_directory/$vm_name ]] ; then
+  error_exit -e "Virtual machine directory $vm_directory/$vm_name does not exist." -t "You must first create the virtual machine before executing this script." -s 123
+fi
 
 ########
 # Main #
 ########
-disk_number=$(existing_disk_count)
+exisiting_disk_count=$(get_exisiting_disk_count)
+total_disks=$((number_of_disks + exisiting_disk_count))
 
-if [[ $((disk_number + number_of_disks)) -gt $max_disks ]] ; then
-  error_exit -e "Maximum number of virtual disk exceeded." -t "The number of virtual disks you have requested will exceed the maximum of $max_disks disks per
-machine."
+if [[ $total_disks -gt $max_disks ]] ; then
+  error_exit -e "Maximum number of virtual disk exceeded."\
+             -t "The number of virtual disks you have requested will exceed the maximum of $max_disks disks per machine."
 fi
 
-[[ $disk_number -eq 0 ]] && disk_number=1
+disk_number=$((exisiting_disk_count + 1))
 
-for (( ; disk_number <= number_of_disks + $(existing_disk_count) ; disk_number++ )) ; do
-  echo "Creating disk # $disk_number."
-  #create_vbox_disk $disk_number
+for (( ; disk_number <= total_disks ; disk_number++ )) ; do
+  echo "Creating disk number $disk_number."
+  create_vbox_disk $disk_number
 done
